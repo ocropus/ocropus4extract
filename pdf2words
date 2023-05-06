@@ -1,0 +1,45 @@
+#!/usr/bin/python
+import sys
+import json
+from pdfminer3.high_level import extract_pages
+from pdfminer3.layout import LTTextContainer, LTChar, LTPage
+
+def extract_word_bounding_boxes(pdf_path):
+    pages_bounding_boxes = []
+
+    for page_layout in extract_pages(pdf_path):
+        word_bounding_boxes = []
+        page_bbox = None
+
+        if isinstance(page_layout, LTPage):
+            page_bbox = page_layout.bbox
+
+        for element in page_layout:
+            if isinstance(element, LTTextContainer):
+                for text_line in element:
+                    for character in text_line:
+                        if isinstance(character, LTChar):
+                            word_bounding_boxes.append({
+                                'word': character.get_text(),
+                                'bbox': character.bbox
+                            })
+
+        pages_bounding_boxes.append({
+            'page_bbox': page_bbox,
+            'word_bboxes': word_bounding_boxes
+        })
+
+    return pages_bounding_boxes
+
+if __name__ == '__main__':
+    if len(sys.argv) != 2:
+        print("Usage: python pdf_word_bounding_boxes.py <pdf_path>")
+        sys.exit(1)
+
+    pdf_path = sys.argv[1]
+    pages_bounding_boxes = extract_word_bounding_boxes(pdf_path)
+
+    for i, page_bounding_boxes in enumerate(pages_bounding_boxes, start=1):
+        print(f"Page {i} Bounding Boxes:")
+        print(json.dumps(page_bounding_boxes, indent=2))
+
