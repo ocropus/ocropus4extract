@@ -45,7 +45,7 @@ def strip_namespace(xml_element):
     return new_element
 
 
-def copy_remove_element(tree, remove_element=None, remaining=0):
+def copy_limit_element(tree, remove_element=None, remaining=0):
     """
     Recursively create a copy of an XML document tree, optionally removing elements of a specific tag name
     when a remaining count is reached.
@@ -63,7 +63,7 @@ def copy_remove_element(tree, remove_element=None, remaining=0):
     # Recursively copy over all sub-elements, conditionally removing elements when remaining is zero.
     for child in tree:
         if remaining > 0 or child.tag != remove_element:
-            new_child, remaining = copy_remove_element(child, remove_element, remaining)
+            new_child, remaining = copy_limit_element(child, remove_element, remaining)
             new_element.append(new_child)
     # Copy over any text content.
     new_element.text = tree.text
@@ -90,6 +90,13 @@ def element_to_string(xml_element):
 
     # Decode the pretty-printed XML string and return it
     return pretty_xml_string.decode('UTF-8')
+
+def ppxml(xml, limit=3000):
+    text = element_to_string(xml)
+    if len(text) < limit:
+        print(text)
+    else:
+        print(text[:limit//2] + " ... " + text[-limit//2:])
 
 
 def filter_elements(tree, allowable_tags):
@@ -204,7 +211,7 @@ def complete_element_tree(xml_element, hierarchy_tags):
     return new_element
 
 
-def group_chars_into_words(chars):
+def group_chars_into_words(chars, keep_space=False):
     words = []
     current_word = []
     for char in chars:
@@ -213,7 +220,8 @@ def group_chars_into_words(chars):
                 words.append(current_word)
             if char.text == ' ':
                 current_word = []
-                words.append(deepcopy(char))
+                if keep_space:
+                    words.append(deepcopy(char))
             else:
                 current_word = [char]
         else:
@@ -229,9 +237,9 @@ def compute_bounding_box(chars):
     bottom = max(int(c.attrib.get('b', 0)) for c in chars)
     return left, top, right, bottom
 
-def abbby_line_to_word_boxes(line):
+def abbby_line_to_word_boxes(line, keep_space=False):
     words = []
-    for word_chars in group_chars_into_words(line.findall(".//charParams")):
+    for word_chars in group_chars_into_words(line.findall(".//charParams"), keep_space=keep_space):
         if not isinstance(word_chars, list):
             words.append(word_chars)
             continue
@@ -290,13 +298,16 @@ def complete_element_tree(tree, hierarchy, depth=0):
         return deepcopy(tree)
     
     assert tree.tag == hierarchy[0], "Expected tag '{}' but found '{}'".format(hierarchy[0], tree.tag)
-    print("  " * depth + "Completing tag '{}' {}".format(tree.tag, hierarchy[:2]))
+    if len(hierarchy) < 2:
+        # If the hierarchy is only one element long, return a copy of the tree
+        return deepcopy(tree)
+    # print("  " * depth + "Completing tag '{}' {}".format(tree.tag, hierarchy[:2]))
     children = []
     orphan = None
     for child in tree:
         if child.tag != hierarchy[1]:
             if orphan is None:
-                print("  " * depth + "Creating orphan element with tag '{}'".format(hierarchy[1]))
+                # print("  " * depth + "Creating orphan element with tag '{}'".format(hierarchy[1]))
                 orphan = Element(hierarchy[1])
             orphan.append(child)
             continue
@@ -314,9 +325,7 @@ def complete_element_tree(tree, hierarchy, depth=0):
     return new_element
 
 
-def abbyy_to_hocr(xml_string):
-    # Parse the input XML string into an ElementTree object
-    root = ET.fromstring(xml_string)
+def abbyy_to_hocr(root):
 
     # Create a new root element for the hOCR output
     hocr_root = ET.Element("html")
@@ -330,38 +339,50 @@ def abbyy_to_hocr(xml_string):
 
         # Loop over all block elements on this page
         for block in page.iter("block"):
-            # Create a new hOCR area element
-            hocr_area = ET.SubElement(hocr_page, "div")
-            hocr_area.set("class", "ocr_carea")
-            hocr_area.set("title", "bbox {} {} {} {}".format(
-                block.get("l"), block.get("t"), block.get("r"), block.get("b")
-            ))
-
-            # Loop over all line elements in this block
-            for line in block.iter("line"):
-                # Create a new hOCR line element
-                hocr_line = ET.SubElement(hocr_area, "span")
-                hocr_line.set("class", "ocr_line")
-                hocr_line.set("title", "bbox {} {} {} {}".format(
-                    line.get("l"), line.get("t"), line.get("r"), line.get("b")
+            if block.get("blockType") in ["Text", "Table"]:
+                # Create a new hOCR area element
+                hocr_area = ET.SubElement(hocr_page, "div")
+                hocr_area.set("class", "ocr_carea")
+                hocr_area.set("title", "bbox {} {} {} {}".format(
+                    block.get("l"), block.get("t"), block.get("r"), block.get("b")
                 ))
 
-                # Loop over all word elements in this line
-                for word in line.iter("word"):
-                    # Create a new hOCR word element
-                    hocr_word = ET.SubElement(hocr_line, "span")
-                    hocr_word.set("class", "ocrx_word")
-                    hocr_word.set("title", "bbox {} {} {} {}".format(
-                        word.get("l"), word.get("t"), word.get("r"), word.get("b")
+                # Loop over all line elements in this block
+                for line in block.iter("line"):
+                    # Create a new hOCR line element
+                    hocr_line = ET.SubElement(hocr_area, "span")
+                    hocr_line.set("class", "ocr_line")
+                    hocr_line.set("title", "bbox {} {} {} {}".format(
+                        line.get("l"), line.get("t"), line.get("r"), line.get("b")
                     ))
 
-                    # Get the text of all charParams elements in this word and append to hOCR word element
-                    word_text = ""
-                    for char in word.iter("charParams"):
-                        if char.text is not None:   
-                            word_text += char.text
-                    hocr_word.text = word_text
+                    # Loop over all word elements in this line
+                    for word in line.iter("word"):
+                        # Create a new hOCR word element
+                        hocr_word = ET.SubElement(hocr_line, "span")
+                        hocr_word.set("class", "ocrx_word")
+                        hocr_word.set("title", "bbox {} {} {} {}".format(
+                            word.get("l"), word.get("t"), word.get("r"), word.get("b")
+                        ))
+
+                        # Get the text of all charParams elements in this word and append to hOCR word element
+                        word_text = ""
+                        for char in word.iter("charParams"):
+                            if char.text is not None:   
+                                word_text += char.text
+                        hocr_word.text = word_text
+                        
+            elif block.get("blockType") in ["Picture", "Image"]:
+                bbox = [block.get("l"), block.get("t"), block.get("r"), block.get("b")]
+                hocr_block = ET.SubElement(hocr_page, "div")
+                hocr_block.set("class", "ocr_carea")
+                hocr_block.set("title", "bbox {} {} {} {}".format(*bbox))
+                
+                hocr_img = ET.SubElement(hocr_block, "img")
+                hocr_img.set("class", "ocr_image")
+                data = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQYV2NkQAIAAAoABaKrrkAAAAASUVORK5CYII="
+                hocr_img.set("src", data)
 
     # Return the hOCR output as an ElementTree object
-    return ET.ElementTree(hocr_root)
+    return hocr_root
 
