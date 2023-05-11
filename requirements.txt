@@ -1,0 +1,11 @@
+lxml
+imageio
+webdataset
+scipy
+numpy
+matplotlib
+beautifulsoup4
+nltk
+pyphen
+papermill
+ray[all]
