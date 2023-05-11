@@ -3,7 +3,7 @@ from copy import deepcopy
 import random
 import xml.etree.ElementTree as ET
 import webdataset as wds
-from xml.etree.ElementTree import Element
+from xml.etree.ElementTree import Element, SubElement
 from xml.dom import minidom
 from xml.dom import minidom
 from xml.etree import ElementTree as ET
@@ -210,7 +210,6 @@ def complete_element_tree(xml_element, hierarchy_tags):
 
     return new_element
 
-
 def group_chars_into_words(chars, keep_space=False):
     words = []
     current_word = []
@@ -325,7 +324,76 @@ def complete_element_tree(tree, hierarchy, depth=0):
     return new_element
 
 
-def abbyy_to_hocr(root):
+from xml.etree.ElementTree import Element
+
+all_abby_to_hocr_glyph_properties = {
+    "charConfidence": "x_conf",
+    "suspicious": "x_susp",
+    "wordFromDictionary": "x_dict",
+    "fontIndex": "x_font_idx",
+    "fontSize": "x_font_size",
+    "bold": "x_bold",
+    "italic": "x_italic",
+    "underlined": "x_underlined",
+    "monospace": "x_monospace",
+    "serif": "x_serif",
+    "smallcaps": "x_smallcaps",
+    "wordStart": "x_word_start",
+    "serifProbability": "x_serif_prob",
+    "wordPenalty": "x_word_penalty",
+    "meanStrokeWidth": "x_msw",
+    "wordNormal": "x_word_normal",
+    "wordNumeric": "x_word_numeric",
+    "wordIdentifier": "x_word_identifier",
+}
+
+usual_glyph_properties = {
+    "charConfidence": "x_conf",
+    "fontSize": "x_font_size",
+    "bold": "x_bold",
+    "italic": "x_italic",
+    "underlined": "x_underlined",
+    "monospace": "x_monospace",
+    "serif": "x_serif",
+    "smallcaps": "x_smallcaps",
+    "meanStrokeWidth": "x_msw",
+}
+
+def abbyy_to_hocr_glyph(char_params, properties=usual_glyph_properties):
+    hocr_props = {prop: char_params.get(attr) for attr, prop in properties.items() if char_params.get(attr) is not None}
+
+    # Handle bbox separately
+    bbox = [char_params.get(attr) for attr in ['l', 't', 'r', 'b'] if char_params.get(attr) is not None]
+    if bbox:
+        hocr_props['bbox'] = ' '.join(str(val) for val in bbox)
+
+    # Construct title attribute
+    title_props = [f'{k} {v}' for k, v in hocr_props.items() if v is not None]
+    title = '; '.join(title_props)
+
+    # Create hOCR glyph element
+    hocr_glyph = Element('span', {
+        'class': 'ocr_glyph',
+        'title': title
+    })
+    hocr_glyph.text = char_params.text  # The recognized character
+
+    return hocr_glyph
+
+def wrap_in_head_body(root):
+    """Wraps the given element tree in 'head' and 'body' elements if they are missing."""
+    # Create new document with 'head' and 'body' elements
+    new_doc = Element('html')
+    head = SubElement(new_doc, 'head')
+    body = SubElement(new_doc, 'body')
+
+    # Append the root element to the new document's body
+    body.append(root)
+
+    return new_doc
+
+
+def abbyy_to_hocr(root, glyph_properties=None):
 
     # Create a new root element for the hOCR output
     hocr_root = ET.Element("html")
@@ -366,11 +434,16 @@ def abbyy_to_hocr(root):
                         ))
 
                         # Get the text of all charParams elements in this word and append to hOCR word element
-                        word_text = ""
-                        for char in word.iter("charParams"):
-                            if char.text is not None:   
-                                word_text += char.text
-                        hocr_word.text = word_text
+                        if glyph_properties is not None:
+                            for cp in word.iter("charParams"):
+                                glyph = abbyy_to_hocr_glyph(cp, glyph_properties)
+                                hocr_word.append(glyph)
+                        else:
+                            word_text = ""
+                            for char in word.iter("charParams"):
+                                if char.text is not None:   
+                                    word_text += char.text
+                            hocr_word.text = word_text
                         
             elif block.get("blockType") in ["Picture", "Image"]:
                 bbox = [block.get("l"), block.get("t"), block.get("r"), block.get("b")]
@@ -382,7 +455,10 @@ def abbyy_to_hocr(root):
                 hocr_img.set("class", "ocr_image")
                 data = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQYV2NkQAIAAAoABaKrrkAAAAASUVORK5CYII="
                 hocr_img.set("src", data)
+                hocr_img.set("alt", "image")
+                hocr_img.set("width", str(int(bbox[2]) - int(bbox[0])))
+                hocr_img.set("height", str(int(bbox[3]) - int(bbox[1])))
 
     # Return the hOCR output as an ElementTree object
-    return hocr_root
-
+    return wrap_in_head_body(hocr_root)
+    
